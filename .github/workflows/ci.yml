@@ -300,10 +300,30 @@ jobs:
           private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
+      - name: Detectar bootstrap (PR que instala o pipeline pela 1ª vez)
+        id: bootstrap
+        run: |
+          # claude-code-action restaura .claude/ da base antes de rodar (PR head
+          # é sempre não confiável). Na PR "chore: instala zenbit-pipeline" a
+          # base ainda não tem .claude/agents/reviewer.md: não há subagente para
+          # revisar. Pula o ai-review (vira "skipped", não bloqueia o merge, como
+          # já acontece com regression-proof) e pede revisão humana só desta vez.
+          if git cat-file -e "origin/$BASE_REF:.claude/agents/reviewer.md" 2>/dev/null; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Avisar que esta PR precisa de revisão humana (bootstrap)
+        if: steps.bootstrap.outputs.skip == 'true'
+        env: { GH_TOKEN: "${{ steps.reviewer.outputs.token }}", PR: "${{ github.event.pull_request.number }}" }
+        run: |
+          gh pr comment "$PR" --body $'ai-review pulado: esta PR instala `.claude/agents/` pela primeira vez (ainda não existe em `'"$BASE_REF"'`), então não há subagente reviewer para rodar contra. Revisão humana, uma vez só.'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: steps.bootstrap.outputs.skip != 'true'
         with: { name: quality-report, path: quality-report }
         continue-on-error: true
       - name: Review 1 · correção, segurança, testes
+        if: steps.bootstrap.outputs.skip != 'true'
         uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -316,6 +336,7 @@ jobs:
             --model claude-opus-5-5 --max-turns 25
             --allowedTools "Read,Grep,Glob,Write(review.json),Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*)"
       - name: Review 2 · qualidade de código (Clean Code, Arquitetura Limpa, DDD)
+        if: steps.bootstrap.outputs.skip != 'true'
         uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -328,6 +349,7 @@ jobs:
             --model claude-opus-5-5 --max-turns 30
             --allowedTools "Read,Grep,Glob,Write(quality.json),Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*)"
       - name: Publicar review (aprova só se os dois aprovarem)
+        if: steps.bootstrap.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.reviewer.outputs.token }}
           PR: ${{ github.event.pull_request.number }}
