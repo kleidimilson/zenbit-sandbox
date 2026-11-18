@@ -57,11 +57,11 @@ jobs:
       DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
       DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
     steps:
-      # nosemgrep: workflow-run-target-code-checkout — seguro aqui: este job só
-      # dispara em workflow_run do CI com event == 'push' (nunca pull_request),
-      # então head_sha é sempre um commit já mergeado em main deste repositório,
-      # nunca a cabeça de um PR de fork; é o commit que o CI acabou de aprovar.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Seguro: este job só dispara em workflow_run do CI com event == 'push'
+      # (nunca pull_request), então head_sha é sempre um commit já mergeado em
+      # main deste repositório, nunca a cabeça de um PR de fork; é o commit
+      # que o CI acabou de aprovar.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 nosemgrep: yaml.github-actions.security.workflow-run-target-code-checkout.workflow-run-target-code-checkout
         with: { ref: "${{ github.event.workflow_run.head_sha }}" }
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
