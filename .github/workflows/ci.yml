@@ -131,12 +131,17 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
-    permissions: { contents: read, pull-requests: read }
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
-        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GITLEAKS_ENABLE_COMMENTS: "false" }
+      - name: Segredos (gitleaks) — só os commits do PR; no push, o histórico todo
+        env: { GITLEAKS_VERSION: "8.24.3" }
+        run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /tmp gitleaks
+          range=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then range=(--log-opts="origin/$BASE_REF..HEAD"); fi
+          /tmp/gitleaks git --redact --no-banner --verbose "${range[@]}" .
       - uses: google/osv-scanner-action/osv-scanner-action@v2.7.1
         with:
           scan-args: --lockfile=pnpm-lock.yaml
