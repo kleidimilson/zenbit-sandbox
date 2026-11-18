@@ -7,3 +7,8 @@ onlyBuiltDependencies:
   - prisma
   - esbuild
   - sharp
+# Correções de segurança em dependências transitivas de dev (osv-scanner, 2026-11-18)
+overrides:
+  qs: ^6.16.1
+  glob@13: ^14.0.2
+  minimatch@10: ^11.0.1
