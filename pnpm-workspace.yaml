@@ -12,3 +12,8 @@ overrides:
   qs: ^6.16.1
   glob@13: ^14.0.2
   minimatch@10: ^11.0.1
+# Travas de supply chain (zenbit-pipeline): versão nova só depois de 7 dias,
+# nada de dependência transitiva de git/tarball e sem rebaixar a confiança de um pacote.
+minimumReleaseAge: 10080
+blockExoticSubdeps: true
+trustPolicy: no-downgrade

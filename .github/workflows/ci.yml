@@ -19,9 +19,9 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint --max-warnings 0
@@ -37,9 +37,9 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22 }
       - run: node scripts/check-test-presence.ts --base "origin/$BASE_REF"
 
@@ -47,9 +47,9 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22 }
       - run: node scripts/check-design-tokens.ts --base "origin/$BASE_REF"
 
@@ -58,14 +58,14 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: bash scripts/check-quality.sh "origin/$BASE_REF"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: { name: quality-report, path: quality-report/, retention-days: 14 }
 
@@ -82,10 +82,10 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:test@localhost:5432/app_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate:deploy
@@ -97,7 +97,7 @@ jobs:
           pipx install diff-cover
           diff-cover coverage/cobertura-coverage.xml \
             --compare-branch="origin/$BASE_REF" --fail-under=90
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: { name: coverage, path: coverage/, retention-days: 14 }
 
@@ -120,10 +120,10 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:test@localhost:5432/app_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate:deploy
@@ -132,7 +132,7 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
       - name: Segredos (gitleaks) — só os commits do PR; no push, o histórico todo
         env: { GITLEAKS_VERSION: "8.24.3" }
@@ -142,7 +142,7 @@ jobs:
           range=()
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then range=(--log-opts="origin/$BASE_REF..HEAD"); fi
           /tmp/gitleaks git --redact --no-banner --verbose "${range[@]}" .
-      - uses: google/osv-scanner-action/osv-scanner-action@v2.7.1
+      - uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
         with:
           scan-args: --lockfile=pnpm-lock.yaml
       - run: pipx run semgrep scan --config p/owasp-top-ten --config p/typescript --error
@@ -159,20 +159,20 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: tag
         env:
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: echo "tag=sha-${SHA::12}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build e push (api, web, migrate)
         id: bake
-        uses: docker/bake-action@v5
+        uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5
         env:
           TAG: ${{ steps.tag.outputs.tag }}
           REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -200,13 +200,13 @@ jobs:
             echo "$svc=$(echo "$META" | jq -r --arg s "$svc" '.[$s]["containerimage.digest"]')" >> "$GITHUB_OUTPUT"
           done
       - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-api", subject-digest: "${{ steps.digests.outputs.api }}", push-to-registry: true }
       - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-web", subject-digest: "${{ steps.digests.outputs.web }}", push-to-registry: true }
       - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-migrate", subject-digest: "${{ steps.digests.outputs.migrate }}", push-to-registry: true }
 
   container-smoke:
@@ -217,8 +217,8 @@ jobs:
     env:
       IMAGE_TAG: ${{ needs.images.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - run: docker compose -f docker-compose.ci.yml up -d --wait --wait-timeout 180
       - run: |
@@ -239,17 +239,17 @@ jobs:
       BASE_URL: http://localhost:3000
       API_HEALTH_URL: http://localhost:8080/health
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - run: docker compose -f docker-compose.ci.yml up -d --wait --wait-timeout 180
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e --project=chromium --project=a11y --project=regression --project=smoke
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with: { name: playwright-report, path: playwright-report }
       - if: failure()
@@ -260,10 +260,10 @@ jobs:
   visual:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
@@ -278,7 +278,7 @@ jobs:
           fi
       - run: pnpm storybook:build
       - run: pnpm test:visual
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with: { name: visual-diff, path: test-results/ }
 
@@ -293,18 +293,18 @@ jobs:
       !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@v1
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         id: reviewer
         with:
           app-id: ${{ secrets.REVIEWER_APP_ID }}
           private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { name: quality-report, path: quality-report }
         continue-on-error: true
       - name: Review 1 · correção, segurança, testes
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.reviewer.outputs.token }}
@@ -316,7 +316,7 @@ jobs:
             --model claude-opus-5-5 --max-turns 25
             --allowedTools "Read,Grep,Glob,Write(review.json),Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*)"
       - name: Review 2 · qualidade de código (Clean Code, Arquitetura Limpa, DDD)
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.reviewer.outputs.token }}
