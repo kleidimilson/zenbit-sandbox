@@ -1,0 +1,15 @@
+name: Teste Discord (temporário)
+on:
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
+      DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: |
+          ./scripts/notify-discord.sh feed "✅ teste do zenbit-pipeline — #dev-feed ok"
+          ./scripts/notify-discord.sh alert "✅ teste do zenbit-pipeline — #needs-you ok"
