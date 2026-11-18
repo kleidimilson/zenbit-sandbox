@@ -1,0 +1,22 @@
+node_modules
+dist
+.next
+.DS_Store
+.env
+*.tsbuildinfo
+
+# zenbit-pipeline
+quality-report/
+security-report/
+coverage/
+playwright-report*/
+test-results/
+storybook-static/
+review.json
+quality.json
+body.md
+triage.json
+triage.md
+plan-brief.md
+release-brief.md
+.zenbit-pipeline/incoming/

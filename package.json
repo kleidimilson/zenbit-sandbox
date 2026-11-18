@@ -1,0 +1,42 @@
+{
+  "name": "zenbit-sandbox",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm build:packages && vitest run",
+    "test:e2e": "playwright test",
+    "test:visual": "playwright test -c playwright.visual.config.ts",
+    "storybook:build": "pnpm --filter ui storybook:build",
+    "db:migrate:deploy": "pnpm --filter db exec prisma migrate deploy",
+    "db:migrate:dev": "pnpm --filter db exec prisma migrate dev",
+    "db:generate": "pnpm --filter db exec prisma generate",
+    "build": "pnpm -r build",
+    "build:packages": "pnpm --filter \"./packages/*\" build"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.1",
+    "@stryker-mutator/core": "^10.1.1",
+    "@stryker-mutator/vitest-runner": "^10.1.1",
+    "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^5.1.1",
+    "dependency-cruiser": "^18.8.0",
+    "eslint": "^10.15.0",
+    "eslint-plugin-sonarjs": "^4.2.2",
+    "jscpd": "^5.4.3",
+    "msw": "^3.0.7",
+    "prettier": "^3.10.1",
+    "style-dictionary": "^5.8.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^5.1.1"
+  }
+}

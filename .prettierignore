@@ -1,0 +1,14 @@
+pnpm-lock.yaml
+node_modules
+dist
+.next
+coverage
+storybook-static
+playwright-report*
+test-results
+.zenbit-pipeline
+**/generated
+packages/ui/src/tokens
+*.md
+.github
+.claude

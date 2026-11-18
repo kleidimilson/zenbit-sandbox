@@ -1,0 +1,20 @@
+:root {
+  --color-brand-primary: #0b5fff;
+  --color-text-on-brand: #ffffff;
+  --space-2: 0.5rem;
+  --space-4: 1rem;
+  --radius-md: 0.5rem;
+}
+.ui-button {
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  font: inherit;
+  cursor: pointer;
+}
+.ui-button:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}

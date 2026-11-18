@@ -1,0 +1,11 @@
+{
+  "name": "db",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "echo db: sem código TypeScript"
+  },
+  "dependencies": {
+    "prisma": "^7.10.1"
+  }
+}
