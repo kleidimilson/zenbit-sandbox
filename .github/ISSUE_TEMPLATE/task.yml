@@ -1,0 +1,67 @@
+name: Tarefa
+description: Ticket pronto para um agente executar
+labels: ["status:draft"]
+body:
+  - type: input
+    id: spec
+    attributes:
+      label: Spec de origem
+      description: Caminho do spec e ID da task (ex. specs/003-checkout/tasks.md#T014)
+    validations: { required: true }
+  - type: textarea
+    id: goal
+    attributes:
+      label: Objetivo
+      description: O que muda para o usuário, em 1-3 frases
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Critérios de aceite (Given/When/Then)
+      value: |
+        - Given ...
+          When ...
+          Then ...
+    validations: { required: true }
+  - type: textarea
+    id: tests
+    attributes:
+      label: Testes esperados
+      description: Quais tipos se aplicam (unit, integração, contrato, aceite, visual, a11y)
+  - type: textarea
+    id: scope
+    attributes:
+      label: Fora de escopo
+  - type: textarea
+    id: files
+    attributes:
+      label: Arquivos e módulos prováveis
+  - type: input
+    id: adr
+    attributes:
+      label: ADRs relevantes
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      options: [backend, frontend, mobile, database, devops]
+    validations: { required: true }
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risco
+      options: [low, med, high]
+    validations: { required: true }
+  - type: checkboxes
+    id: dor
+    attributes:
+      label: Definition of Ready
+      options:
+        - label: Cabe em um PR de até ~400 linhas
+          required: true
+        - label: Critérios de aceite testáveis
+          required: true
+        - label: Dependências mapeadas em "blocked by"
+          required: true
+        - label: Sem decisão de arquitetura em aberto
+          required: true

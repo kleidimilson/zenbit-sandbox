@@ -1,0 +1,7 @@
+# Regras do hadolint para os Dockerfiles do projeto.
+failure-threshold: warning
+ignored:
+  # A imagem base já é fixada por versão (node:22.x.y-bookworm-slim); fixar a versão
+  # de cada pacote apt quebra o build a cada atualização do Debian. Reavalie se o
+  # time exigir builds bit a bit reproduzíveis.
+  - DL3008

@@ -1,0 +1,49 @@
+name: Bug
+description: Comportamento errado que precisa de correção e teste de regressão
+labels: ["status:draft", "type:bug"]
+body:
+  - type: textarea
+    id: actual
+    attributes:
+      label: O que acontece
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: O que deveria acontecer
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Passos para reproduzir
+      value: |
+        1.
+        2.
+        3.
+    validations: { required: true }
+  - type: textarea
+    id: regression
+    attributes:
+      label: Critério do teste de regressão (Given/When/Then)
+      description: Vira tests/regression/issue-<N>.test.ts e precisa falhar na main atual
+      value: |
+        - Given ...
+          When ...
+          Then ...
+    validations: { required: true }
+  - type: input
+    id: env
+    attributes:
+      label: Ambiente e versão
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      options: [backend, frontend, mobile, database, devops]
+    validations: { required: true }
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risco
+      options: [low, med, high]
+    validations: { required: true }

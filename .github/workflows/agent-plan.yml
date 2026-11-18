@@ -1,0 +1,166 @@
+name: Agent · plan
+# Spec aprovado (merge de specs/<feature>/spec.md na main) → agentes planner,
+# code-quality e security escrevem plan.md, tasks.md, modelo de domínio e
+# threat model → PR para o responsável técnico aprovar.
+# Merge desse PR (tasks.md na main) → issues criadas pelo App agent → triagem.
+on:
+  push:
+    branches: [main]
+    paths: ["specs/*/spec.md", "specs/*/tasks.md"]
+  workflow_dispatch:
+    inputs:
+      feature:
+        description: Pasta em specs/ (ex. 003-checkout)
+        required: true
+      step:
+        description: plan = gerar o plano · issues = criar issues do tasks.md
+        type: choice
+        options: [plan, issues]
+        default: plan
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      plan: ${{ steps.d.outputs.plan }}
+      issues: ${{ steps.d.outputs.issues }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: d
+        env:
+          BEFORE: ${{ github.event.before }}
+          FEATURE: ${{ inputs.feature }}
+          STEP: ${{ inputs.step }}
+        run: |
+          to_json() { jq -Rnc '[inputs | select(length > 0)]'; }
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [[ "$FEATURE" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "feature inválida"; exit 1; }
+            [ -d "specs/$FEATURE" ] || { echo "specs/$FEATURE não existe"; exit 1; }
+            if [ "$STEP" = plan ]; then plan=$(echo "$FEATURE" | to_json); issues='[]'
+            else plan='[]'; issues=$(echo "$FEATURE" | to_json); fi
+          else
+            changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- specs 2>/dev/null || git diff --name-only HEAD~1 HEAD -- specs)
+            plan=$({ echo "$changed" | grep -E '^specs/[^/]+/spec\.md$' || true; } \
+              | while read -r f; do d=$(dirname "$f"); [ -f "$d/plan.md" ] || basename "$d"; done | to_json)
+            issues=$({ echo "$changed" | grep -E '^specs/[^/]+/tasks\.md$' || true; } \
+              | while read -r f; do [ -f "$f" ] && basename "$(dirname "$f")"; done | to_json)
+          fi
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+          echo "issues=$issues" >> "$GITHUB_OUTPUT"
+
+  plan:
+    needs: detect
+    if: needs.detect.outputs.plan != '[]'
+    strategy:
+      max-parallel: 1
+      matrix:
+        feature: ${{ fromJSON(needs.detect.outputs.plan) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      F: ${{ matrix.feature }}
+      DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
+      DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with: { token: "${{ steps.app.outputs.token }}", fetch-depth: 0 }
+      - name: Branch
+        run: |
+          git config user.name "agent[bot]"
+          git config user.email "agent[bot]@users.noreply.github.com"
+          git switch -c "plan/$F"
+
+      - name: Sessão 1 · plano e tasks
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: |
+            Use o subagente planner para specs/${{ env.F }}/spec.md.
+            Grave specs/${{ env.F }}/plan.md, specs/${{ env.F }}/tasks.md e plan-brief.md.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 60
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(git log:*),Bash(ls:*)"
+
+      - name: Sessão 2 · modelo de domínio
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: |
+            Use o subagente code-quality no modo "Modelagem de domínio" para
+            specs/${{ env.F }}/plan.md. Invariantes novas viram critérios nas
+            tasks afetadas de specs/${{ env.F }}/tasks.md. Decisão de domínio que
+            precise do humano: acrescente em "Decisões para você" do plan-brief.md.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 40
+            --allowedTools "Read,Grep,Glob,Edit,Write"
+
+      - name: Sessão 3 · threat model
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: |
+            Use o subagente security para fazer o threat model de
+            specs/${{ env.F }}/spec.md e plan.md (skill threat-model), gravando em
+            docs/threat-models/${{ env.F }}.md. Cada mitigação vira critério na task
+            correspondente de tasks.md. Risco alto: acrescente em "Riscos altos" do plan-brief.md.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 40
+            --allowedTools "Read,Grep,Glob,Edit,Write"
+
+      - name: Conferir escopo (agente de plano só escreve em specs/ e docs/)
+        run: |
+          for f in "specs/$F/plan.md" "specs/$F/tasks.md" plan-brief.md; do test -s "$f" || { echo "$f não gerado"; exit 1; }; done
+          outside=$(git status --porcelain --untracked-files=all | awk '{print $NF}' | grep -vE "^(specs/$F/|docs/|plan-brief\.md$)" || true)
+          [ -z "$outside" ] || { echo "Arquivos fora do escopo do plano:"; echo "$outside"; exit 1; }
+          git diff --quiet -- "specs/$F/spec.md" || { echo "spec.md foi alterado"; exit 1; }
+
+      - name: Abrir PR do plano
+        env: { GH_TOKEN: "${{ steps.app.outputs.token }}" }
+        run: |
+          git add "specs/$F" docs
+          git commit -m "docs: plano, tasks e modelo de domínio de $F"
+          git push -u origin "plan/$F"
+          url=$(gh pr create --title "docs: plano de $F" --body-file plan-brief.md --label "risk:high,type:chore")
+          ./scripts/notify-discord.sh alert "📐 Plano de $F aguardando sua aprovação: $url"
+
+      - name: Falhou
+        if: failure()
+        run: |
+          ./scripts/notify-discord.sh alert "⚠️ Planejamento de $F falhou: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  issues:
+    needs: detect
+    if: needs.detect.outputs.issues != '[]'
+    strategy:
+      max-parallel: 1
+      matrix:
+        feature: ${{ fromJSON(needs.detect.outputs.issues) }}
+    runs-on: ubuntu-latest
+    env:
+      F: ${{ matrix.feature }}
+      DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
+      DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+    steps:
+      # issues criadas pelo App agent disparam a triagem (eventos do GITHUB_TOKEN não disparam)
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Criar issues
+        env: { GH_TOKEN: "${{ steps.app.outputs.token }}" }
+        run: |
+          node scripts/tasks-to-issues.ts "specs/$F/tasks.md" | tee /tmp/out.txt
+          ./scripts/notify-discord.sh feed "🗂️ $F: $(tail -1 /tmp/out.txt)"

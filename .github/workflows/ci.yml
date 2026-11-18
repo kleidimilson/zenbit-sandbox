@@ -1,0 +1,338 @@
+name: CI
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BASE_REF: ${{ github.base_ref || 'main' }}
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint --max-warnings 0
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - name: Lint dos Dockerfiles
+        run: |
+          for f in docker/*.Dockerfile; do
+            docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" hadolint/hadolint hadolint - < "$f"
+          done
+
+  test-presence:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node scripts/check-test-presence.ts --base "origin/$BASE_REF"
+
+  design-tokens:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node scripts/check-design-tokens.ts --base "origin/$BASE_REF"
+
+  architecture:
+    # Arquitetura Limpa/DDD (dependency-cruiser), limites de Clean Code (ESLint) e duplicação (jscpd)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/check-quality.sh "origin/$BASE_REF"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: quality-report, path: quality-report/, retention-days: 14 }
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: app_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+      # thresholds de cobertura total ficam no vitest.config.ts (falha se abaixo)
+      - run: pnpm test --coverage
+      - name: Cobertura do diff (>= 90%)
+        if: github.event_name == 'pull_request'
+        run: |
+          pipx install diff-cover
+          diff-cover coverage/cobertura-coverage.xml \
+            --compare-branch="origin/$BASE_REF" --fail-under=90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: coverage, path: coverage/, retention-days: 14 }
+
+  regression-proof:
+    # obrigatório em PR de bug: label type:bug ou título "fix..."
+    if: >-
+      github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'type:bug') ||
+        startsWith(github.event.pull_request.title, 'fix')
+      )
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: app_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+      - run: bash scripts/regression-proof.sh "$BASE_REF"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: google/osv-scanner-action/osv-scanner-action@v2
+        with:
+          scan-args: --lockfile=pnpm-lock.yaml
+      - run: pipx run semgrep scan --config p/owasp-top-ten --config p/typescript --error
+
+  images:
+    # build das imagens no GitHub, push no GHCR com tag sha-<commit>, scan e provenance
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        env:
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "tag=sha-${SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build e push (api, web, migrate)
+        id: bake
+        uses: docker/bake-action@v5
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        with:
+          files: docker-bake.hcl
+          push: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+      - name: Scan de vulnerabilidades (Trivy)
+        run: |
+          for svc in api web migrate; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              -e TRIVY_USERNAME="${{ github.actor }}" -e TRIVY_PASSWORD="${{ secrets.GITHUB_TOKEN }}" \
+              aquasec/trivy:latest image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH \
+              "ghcr.io/kleidimilson/zenbit-sandbox-$svc:${{ steps.tag.outputs.tag }}"
+          done
+      - name: Digests
+        id: digests
+        env:
+          META: ${{ steps.bake.outputs.metadata }}
+        run: |
+          for svc in api web migrate; do
+            echo "$svc=$(echo "$META" | jq -r --arg s "$svc" '.[$s]["containerimage.digest"]')" >> "$GITHUB_OUTPUT"
+          done
+      - uses: actions/attest-build-provenance@v1
+        with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-api", subject-digest: "${{ steps.digests.outputs.api }}", push-to-registry: true }
+      - uses: actions/attest-build-provenance@v1
+        with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-web", subject-digest: "${{ steps.digests.outputs.web }}", push-to-registry: true }
+      - uses: actions/attest-build-provenance@v1
+        with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-migrate", subject-digest: "${{ steps.digests.outputs.migrate }}", push-to-registry: true }
+
+  container-smoke:
+    # a imagem sobe, migra, fica healthy e responde
+    needs: images
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: read }
+    env:
+      IMAGE_TAG: ${{ needs.images.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: docker compose -f docker-compose.ci.yml up -d --wait --wait-timeout 180
+      - run: |
+          curl -fsS http://localhost:8080/health
+          curl -fsS http://localhost:3000/api/health
+      - if: failure()
+        run: docker compose -f docker-compose.ci.yml logs --no-color | tail -300
+      - if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
+
+  e2e:
+    # E2E contra as imagens que vão para produção, não contra um build local
+    needs: images
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: read }
+    env:
+      IMAGE_TAG: ${{ needs.images.outputs.tag }}
+      BASE_URL: http://localhost:3000
+      API_HEALTH_URL: http://localhost:8080/health
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: docker compose -f docker-compose.ci.yml up -d --wait --wait-timeout 180
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e --project=chromium --project=a11y --project=regression --project=smoke
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-report, path: playwright-report }
+      - if: failure()
+        run: docker compose -f docker-compose.ci.yml logs --no-color | tail -300
+      - if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
+
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Baseline alterada exige label visual-change
+        if: github.event_name == 'pull_request'
+        env:
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'visual-change') }}
+        run: |
+          changed=$(git diff --name-only "origin/$BASE_REF"...HEAD -- 'e2e/visual/**/*-snapshots/**' || true)
+          if [ -n "$changed" ] && [ "$HAS_LABEL" != "true" ]; then
+            echo "Baselines visuais alteradas sem o label visual-change:"; echo "$changed"; exit 1
+          fi
+      - run: pnpm storybook:build
+      - run: pnpm test:visual
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: visual-diff, path: test-results/ }
+
+  ai-review:
+    needs: [quality, test-presence, design-tokens, architecture, test, regression-proof, security, images, container-smoke, e2e, visual]
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: reviewer
+        with:
+          app-id: ${{ secrets.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { name: quality-report, path: quality-report }
+        continue-on-error: true
+      - name: Review 1 · correção, segurança, testes
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.reviewer.outputs.token }}
+          prompt: |
+            Use o subagente reviewer para revisar o PR #${{ github.event.pull_request.number }}.
+            Base: origin/${{ env.BASE_REF }}. Leia a issue vinculada e o spec.
+            Escreva o resultado em review.json no formato da skill code-review.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 25
+            --allowedTools "Read,Grep,Glob,Write(review.json),Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*)"
+      - name: Review 2 · qualidade de código (Clean Code, Arquitetura Limpa, DDD)
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.reviewer.outputs.token }}
+          prompt: |
+            Use o subagente code-quality no modo "Review de PR" para o PR #${{ github.event.pull_request.number }}.
+            Base: origin/${{ env.BASE_REF }}. Leia a issue, o plan.md, docs/domain/ e quality-report/.
+            Escreva o resultado em quality.json no formato da skill quality-review.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 30
+            --allowedTools "Read,Grep,Glob,Write(quality.json),Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*)"
+      - name: Publicar review (aprova só se os dois aprovarem)
+        env:
+          GH_TOKEN: ${{ steps.reviewer.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          for f in review.json quality.json; do test -f "$f" || { echo "$f não gerado"; exit 1; }; done
+          v1=$(jq -r .verdict review.json); v2=$(jq -r .verdict quality.json)
+          {
+            echo "## Review (correção, segurança, testes) — $v1"; jq -r .summary review.json; echo
+            echo "## Qualidade de código (Clean Code, Arquitetura Limpa, DDD) — $v2"; jq -r .summary quality.json; echo
+            jq -r '.findings[] | select(.severity != "minor") | "- **\(.severity)** `\(.file):\(.line)` [\(.principle)] \(.smell): \(.message) → \(.refactor)"' quality.json
+          } > body.md
+          if [ "$v1" = "approve" ] && [ "$v2" = "approve" ]; then
+            gh pr review "$PR" --approve --body-file body.md
+          else
+            gh pr review "$PR" --request-changes --body-file body.md
+            gh pr edit "$PR" --add-label status:needs-fix
+            exit 1
+          fi
