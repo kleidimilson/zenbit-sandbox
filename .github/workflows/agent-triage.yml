@@ -1,0 +1,120 @@
+name: Agent · triage
+# Classifica toda issue nova ou editada (área, tipo, risco, Definition of Ready).
+# Issue risk:low, pronta e criada pelo responsável técnico ou pelo App agent vai
+# direto para o agente (status:ready). O resto fica em status:draft com o que
+# falta e, se só faltar o OK humano, avisa no #needs-you.
+on:
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Número da issue
+        required: true
+
+concurrency:
+  group: triage-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    # só autores de confiança (evita gastar agente com issue de fora) e nunca
+    # issue que já está com um agente ou que é relatório automático
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        !github.event.issue.pull_request &&
+        (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) ||
+         github.event.issue.user.login == 'kleidimilson-agent[bot]') &&
+        !contains(github.event.issue.labels.*.name, 'status:ready') &&
+        !contains(github.event.issue.labels.*.name, 'status:in-progress') &&
+        !contains(github.event.issue.labels.*.name, 'status:in-review') &&
+        !contains(github.event.issue.labels.*.name, 'status:done') &&
+        !contains(github.event.issue.labels.*.name, 'triage:skip') &&
+        !contains(github.event.issue.labels.*.name, 'quality-report') &&
+        !contains(github.event.issue.labels.*.name, 'wayfinder:map')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      N: ${{ github.event.issue.number || inputs.issue }}
+      TECH_LEAD: kleidimilson
+      AGENT_BOT: kleidimilson-agent[bot]
+      AUTO_READY: "true"
+      DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
+      DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+    steps:
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        id: app
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Triagem
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: |
+            Use o subagente triage para a issue #${{ env.N }}.
+            Grave o resultado só em triage.json, no formato da skill triage.
+          claude_args: >-
+            --model claude-sonnet-5-5 --max-turns 20
+            --allowedTools "Read,Grep,Glob,Write(triage.json),Bash(gh issue view:*)"
+
+      - name: Aplicar labels (valida tudo que o agente escreveu)
+        env: { GH_TOKEN: "${{ steps.app.outputs.token }}" }
+        run: |
+          test -f triage.json || { echo "triage.json não gerado"; exit 1; }
+          area=$(jq -r .area triage.json); type=$(jq -r .type triage.json)
+          risk=$(jq -r .risk triage.json); ready=$(jq -r '.ready == true' triage.json)
+          case "$area" in backend|frontend|mobile|database|devops) ;; *) echo "area inválida: $area"; exit 1 ;; esac
+          case "$type" in feature|bug|security|chore) ;; *) echo "type inválido: $type"; exit 1 ;; esac
+          case "$risk" in low|med|high) ;; *) echo "risk inválido: $risk"; exit 1 ;; esac
+
+          rank() { case "$1" in low) echo 1 ;; med) echo 2 ;; high) echo 3 ;; *) echo 0 ;; esac; }
+          labels=$(gh issue view "$N" --json labels -q '.labels[].name')
+          current=$(echo "$labels" | grep '^risk:' | head -1 | cut -d: -f2 || true)
+          # pisos de risco: banco é sempre high, segurança nunca é low, e a
+          # triagem nunca baixa um risco já definido por humano ou pelo planner
+          [ "$area" = database ] && risk=high
+          if [ "$type" = security ] && [ "$risk" = low ]; then risk=med; fi
+          if [ "$(rank "$current")" -gt "$(rank "$risk")" ]; then risk=$current; fi
+          if [ "$(jq -r '(.flags // []) | index("prompt-injection") != null' triage.json)" = true ]; then
+            ready=false; risk=high
+          fi
+
+          old=$(echo "$labels" | grep -E '^(area|type|risk):' | grep -vxE "area:$area|type:$type|risk:$risk" | paste -sd, - || true)
+          [ -z "$old" ] || gh issue edit "$N" --remove-label "$old"
+          gh issue edit "$N" --add-label "area:$area,type:$type,risk:$risk"
+
+          author=$(gh api "repos/$GITHUB_REPOSITORY/issues/$N" -q .user.login)
+          trusted=false
+          if [ "$author" = "$TECH_LEAD" ] || [ "$author" = "$AGENT_BOT" ]; then trusted=true; fi
+
+          list() { jq -r --arg k "$1" '(.[$k] // [])[] | "- " + .' triage.json; }
+          {
+            echo "<!-- zenbit-triage -->"
+            echo "**Triagem:** área \`$area\` · tipo \`$type\` · risco \`$risk\`"
+            echo; jq -r .reason triage.json; echo
+            m=$(list missing); [ -z "$m" ] || printf '**Falta para a Definition of Ready**\n%s\n\n' "$m"
+            q=$(list questions); [ -z "$q" ] || printf '**Perguntas para @%s**\n%s\n\n' "$TECH_LEAD" "$q"
+            s=$(list split); [ -z "$s" ] || printf '**Quebra proposta**\n%s\n\n' "$s"
+          } > triage.md
+
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/issues/$N"
+          if [ "$ready" = true ] && [ "$risk" = low ] && [ "$AUTO_READY" = true ] && [ "$trusted" = true ]; then
+            echo "✅ Pronta e \`risk:low\`: enviada direto para o agente." >> triage.md
+            gh issue edit "$N" --add-label status:ready
+            gh issue edit "$N" --remove-label status:draft 2>/dev/null || true
+            ./scripts/notify-discord.sh feed "🤖 #$N triada como risk:low e enviada ao agente"
+          elif [ "$ready" = true ]; then
+            echo "🟡 Pronta. Precisa do seu OK (\`risk:$risk\`): marque \`status:ready\` para disparar o agente." >> triage.md
+            gh issue edit "$N" --add-label status:draft
+            ./scripts/notify-discord.sh alert "🟡 #$N pronta, aguardando seu OK (risk:$risk): $url"
+          else
+            echo "📝 Ainda não está pronta. Edite a issue e a triagem roda de novo." >> triage.md
+            gh issue edit "$N" --add-label status:draft
+          fi
+          gh issue comment "$N" --edit-last --body-file triage.md 2>/dev/null || gh issue comment "$N" --body-file triage.md

@@ -1,0 +1,63 @@
+name: Security · sprint audit
+on:
+  milestone:
+    types: [closed]
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
+      DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+    steps:
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        id: app
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22 }
+
+      - name: Auditoria
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: |
+            Use o subagente security e rode /security-audit no repositório inteiro.
+            Contexto: docs/threat-models/ e os specs da sprint "${{ github.event.milestone.title || 'manual' }}".
+            Grave findings.json e o relatório em security-report/. Não altere código.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 200
+            --allowedTools "Task,Read,Grep,Glob,Write(security-report/**),Bash(node:*),Bash(git log:*)"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: { name: security-report, path: security-report/, retention-days: 90 }
+
+      - name: Achados → issues
+        env: { GH_TOKEN: "${{ steps.app.outputs.token }}" }
+        run: node scripts/findings-to-issues.ts security-report/findings.json
+
+      - name: Planos grandes → Wayfinder
+        if: hashFiles('security-report/clusters.json') != ''
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: |
+            Para cada cluster em security-report/clusters.json, rode /wayfinder com
+            destino "corrigir a classe de vulnerabilidade inteira". Crie a issue-mapa
+            (wayfinder:map) e os tickets filhos com type:security e status:draft.
+            Cada ticket tem um critério Given/When/Then que vira teste de regressão.
+            Decisões que exigem humano viram tickets HITL, não suposições.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 80
+            --allowedTools "Read,Grep,Glob,Bash(gh issue:*),Bash(gh label:*)"
+
+      - name: Resumo
+        if: always()
+        run: |
+          ./scripts/notify-discord.sh feed "🛡️ Auditoria da sprint: ${{ job.status }} — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

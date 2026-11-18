@@ -1,0 +1,20 @@
+# Staging e produção. Copiado para o servidor por scripts/deploy.sh.
+# Variáveis de ambiente vêm de /opt/zenbit-sandbox/.env no servidor (nunca do repo).
+services:
+  migrate:
+    image: ghcr.io/kleidimilson/zenbit-sandbox-migrate:${IMAGE_TAG:?defina IMAGE_TAG}
+    env_file: .env
+    restart: "no"
+    profiles: ["migrate"]
+  api:
+    image: ghcr.io/kleidimilson/zenbit-sandbox-api:${IMAGE_TAG}
+    env_file: .env
+    restart: unless-stopped
+    ports: ["127.0.0.1:8080:8080"]
+  web:
+    image: ghcr.io/kleidimilson/zenbit-sandbox-web:${IMAGE_TAG}
+    env_file: .env
+    environment: { API_URL: "http://api:8080" }
+    restart: unless-stopped
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: { api: { condition: service_healthy } }

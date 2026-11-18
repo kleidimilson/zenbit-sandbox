@@ -1,0 +1,40 @@
+{
+  "$schemaVersion": 1,
+  "project": "zenbit-sandbox",
+  "repo": "kleidimilson/zenbit-sandbox",
+  "techLead": "kleidimilson",
+  "timezone": "America/Fortaleza",
+  "discord": true,
+  "testing": {
+    "coverageTotal": 80,
+    "coverageDiff": 90,
+    "mutationMin": 60
+  },
+  "quality": {
+    "maxComplexity": 10,
+    "maxCognitive": 15,
+    "maxFunctionLines": 40,
+    "maxComponentLines": 80,
+    "maxFileLines": 300,
+    "maxParams": 3,
+    "maxDepth": 3
+  },
+  "automation": {
+    "autoReadyLowRisk": true,
+    "agentBot": ""
+  },
+  "models": {
+    "worker": "claude-sonnet-5-5",
+    "reviewer": "claude-opus-5-5"
+  },
+  "paths": {
+    "source": ["apps/*/src", "packages/*/src"],
+    "ui": ["apps/web", "apps/mobile", "packages/ui"],
+    "integrations": "infrastructure/integrations",
+    "regression": "tests/regression"
+  },
+  "designSystem": {
+    "source": "",
+    "package": ""
+  }
+}

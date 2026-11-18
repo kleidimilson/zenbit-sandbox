@@ -1,0 +1,22 @@
+{
+  "minTokens": 70,
+  "minLines": 6,
+  "format": ["typescript", "tsx", "javascript", "jsx"],
+  "pattern": "{apps,packages}/**/*.{ts,tsx,js,jsx}",
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/generated/**",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/e2e/**",
+    "**/tests/**",
+    "**/fixtures/**",
+    "**/tokens/**"
+  ],
+  "reporters": ["json", "console"],
+  "output": "quality-report/jscpd",
+  "absolute": false,
+  "gitignore": true
+}

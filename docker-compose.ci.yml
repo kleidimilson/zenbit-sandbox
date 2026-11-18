@@ -1,0 +1,21 @@
+# CI e e2e: sobe as imagens EXATAS publicadas no GHCR para o commit (IMAGE_TAG).
+# docker compose -f docker-compose.ci.yml up -d --wait
+services:
+  db:
+    image: postgres:16
+    environment: { POSTGRES_PASSWORD: test, POSTGRES_DB: app_test }
+    healthcheck: { test: ["CMD", "pg_isready"], interval: 3s, retries: 20 }
+  migrate:
+    image: ghcr.io/kleidimilson/zenbit-sandbox-migrate:${IMAGE_TAG:?defina IMAGE_TAG}
+    environment: { DATABASE_URL: "postgresql://postgres:test@db:5432/app_test" }
+    depends_on: { db: { condition: service_healthy } }
+  api:
+    image: ghcr.io/kleidimilson/zenbit-sandbox-api:${IMAGE_TAG}
+    environment: { DATABASE_URL: "postgresql://postgres:test@db:5432/app_test" }
+    ports: ["8080:8080"]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+  web:
+    image: ghcr.io/kleidimilson/zenbit-sandbox-web:${IMAGE_TAG}
+    environment: { API_URL: "http://api:8080" }
+    ports: ["3000:3000"]
+    depends_on: { api: { condition: service_healthy } }

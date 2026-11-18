@@ -1,0 +1,24 @@
+{
+  "color": {
+    "blue": { "600": { "$value": "#1F5EFF", "$type": "color" } },
+    "neutral": {
+      "0": { "$value": "#FFFFFF", "$type": "color" },
+      "900": { "$value": "#111827", "$type": "color" }
+    },
+    "brand": { "primary": { "$value": "{color.blue.600}", "$type": "color" } },
+    "text": { "default": { "$value": "{color.neutral.900}", "$type": "color" } },
+    "background": { "surface": { "$value": "{color.neutral.0}", "$type": "color" } }
+  },
+  "space": {
+    "1": { "$value": "4px", "$type": "dimension" },
+    "2": { "$value": "8px", "$type": "dimension" },
+    "4": { "$value": "16px", "$type": "dimension" }
+  },
+  "radius": { "md": { "$value": "8px", "$type": "dimension" } },
+  "font": {
+    "family": { "sans": { "$value": "Inter, system-ui, sans-serif", "$type": "fontFamily" } },
+    "size": { "md": { "$value": "16px", "$type": "dimension" } }
+  },
+  "shadow": { "sm": { "$value": "0 1px 2px rgba(0,0,0,0.08)", "$type": "shadow" } },
+  "breakpoint": { "md": { "$value": "768px", "$type": "dimension" } }
+}

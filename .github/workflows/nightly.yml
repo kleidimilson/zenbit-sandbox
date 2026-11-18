@@ -1,0 +1,93 @@
+name: Nightly · regressão completa
+on:
+  schedule:
+    - cron: "17 6 * * *"   # 03:17 em America/Fortaleza
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: app_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+      - name: Suíte completa + contratos contra sandbox dos terceiros
+        run: pnpm test
+        env:
+          RUN_SANDBOX: "1"   # inclui *.sandbox.test.ts (ver vitest.config.ts)
+
+  e2e-cross-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps
+      - run: pnpm test:e2e --project=chromium --project=firefox --project=webkit --project=regression --project=a11y
+        env: { BASE_URL: "${{ vars.STAGING_URL }}" }
+
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm storybook:build
+      - run: pnpm test:visual
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Stryker nos arquivos alterados nos últimos 7 dias
+        run: |
+          files=$(git log --since="7 days ago" --name-only --pretty=format: -- 'apps/*/src/**/*.ts' 'packages/*/src/**/*.ts' \
+            | grep -v -E '\.(test|spec|d)\.ts$' | sort -u | paste -sd, -)
+          if [ -z "$files" ]; then echo "nada alterado"; exit 0; fi
+          pnpm exec stryker run --mutate "$files" --thresholds.break 60
+
+  report:
+    needs: [regression, e2e-cross-browser, visual, mutation]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
+      DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Abrir issue e alertar
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          url=$(gh issue create --title "bug: nightly falhou em $(date -u +%Y-%m-%d)" \
+            --body "Jobs: regressão=${{ needs.regression.result }}, e2e=${{ needs.e2e-cross-browser.result }}, visual=${{ needs.visual.result }}, mutação=${{ needs.mutation.result }}. Run: $run_url" \
+            --label "type:bug,risk:high,status:draft")
+          ./scripts/notify-discord.sh alert "🌙 Nightly falhou: $url"

@@ -1,0 +1,370 @@
+name: CI
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BASE_REF: ${{ github.base_ref || 'main' }}
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint --max-warnings 0
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - name: Lint dos Dockerfiles
+        run: |
+          for f in docker/*.Dockerfile; do
+            docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" hadolint/hadolint hadolint - < "$f"
+          done
+
+  test-presence:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22 }
+      - run: node scripts/check-test-presence.ts --base "origin/$BASE_REF"
+
+  design-tokens:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22 }
+      - run: node scripts/check-design-tokens.ts --base "origin/$BASE_REF"
+
+  architecture:
+    # Arquitetura Limpa/DDD (dependency-cruiser), limites de Clean Code (ESLint) e duplicação (jscpd)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/check-quality.sh "origin/$BASE_REF"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with: { name: quality-report, path: quality-report/, retention-days: 14 }
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: app_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+      # thresholds de cobertura total ficam no vitest.config.ts (falha se abaixo)
+      - run: pnpm test --coverage
+      - name: Cobertura do diff (>= 90%)
+        if: github.event_name == 'pull_request'
+        run: |
+          pipx install diff-cover
+          diff-cover coverage/cobertura-coverage.xml \
+            --compare-branch="origin/$BASE_REF" --fail-under=90
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with: { name: coverage, path: coverage/, retention-days: 14 }
+
+  regression-proof:
+    # obrigatório em PR de bug: label type:bug ou título "fix..."
+    if: >-
+      github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'type:bug') ||
+        startsWith(github.event.pull_request.title, 'fix')
+      )
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: app_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+      - run: bash scripts/regression-proof.sh "$BASE_REF"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - name: Segredos (gitleaks) — só os commits do PR; no push, o histórico todo
+        env: { GITLEAKS_VERSION: "8.24.3" }
+        run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /tmp gitleaks
+          range=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then range=(--log-opts="origin/$BASE_REF..HEAD"); fi
+          /tmp/gitleaks git --redact --no-banner --verbose "${range[@]}" .
+      - uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
+        with:
+          scan-args: --lockfile=pnpm-lock.yaml
+      - run: pipx run semgrep scan --config p/owasp-top-ten --config p/typescript --error
+
+  images:
+    # build das imagens no GitHub, push no GHCR com tag sha-<commit>, scan e provenance
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: tag
+        env:
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "tag=sha-${SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build e push (api, web, migrate)
+        id: bake
+        uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        with:
+          files: docker-bake.hcl
+          push: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+      - name: Scan de vulnerabilidades (Trivy)
+        run: |
+          for svc in api web migrate; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              -e TRIVY_USERNAME="${{ github.actor }}" -e TRIVY_PASSWORD="${{ secrets.GITHUB_TOKEN }}" \
+              aquasec/trivy:latest image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH \
+              "ghcr.io/kleidimilson/zenbit-sandbox-$svc:${{ steps.tag.outputs.tag }}"
+          done
+      # attestation não existe em repositório privado de conta pessoal (limitação do GitHub)
+      - name: Digests
+        id: digests
+        env:
+          META: ${{ steps.bake.outputs.metadata }}
+        run: |
+          for svc in api web migrate; do
+            echo "$svc=$(echo "$META" | jq -r --arg s "$svc" '.[$s]["containerimage.digest"]')" >> "$GITHUB_OUTPUT"
+          done
+      - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
+        with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-api", subject-digest: "${{ steps.digests.outputs.api }}", push-to-registry: true }
+      - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
+        with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-web", subject-digest: "${{ steps.digests.outputs.web }}", push-to-registry: true }
+      - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
+        with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-migrate", subject-digest: "${{ steps.digests.outputs.migrate }}", push-to-registry: true }
+
+  container-smoke:
+    # a imagem sobe, migra, fica healthy e responde
+    needs: images
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: read }
+    env:
+      IMAGE_TAG: ${{ needs.images.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: docker compose -f docker-compose.ci.yml up -d --wait --wait-timeout 180
+      - run: |
+          curl -fsS http://localhost:8080/health
+          curl -fsS http://localhost:3000/api/health
+      - if: failure()
+        run: docker compose -f docker-compose.ci.yml logs --no-color | tail -300
+      - if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
+
+  e2e:
+    # E2E contra as imagens que vão para produção, não contra um build local
+    needs: images
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: read }
+    env:
+      IMAGE_TAG: ${{ needs.images.outputs.tag }}
+      BASE_URL: http://localhost:3000
+      API_HEALTH_URL: http://localhost:8080/health
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: docker compose -f docker-compose.ci.yml up -d --wait --wait-timeout 180
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e --project=chromium --project=a11y --project=regression --project=smoke
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with: { name: playwright-report, path: playwright-report }
+      - if: failure()
+        run: docker compose -f docker-compose.ci.yml logs --no-color | tail -300
+      - if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
+
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Baseline alterada exige label visual-change
+        if: github.event_name == 'pull_request'
+        env:
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'visual-change') }}
+        run: |
+          changed=$(git diff --name-only "origin/$BASE_REF"...HEAD -- 'e2e/visual/**/*-snapshots/**' || true)
+          if [ -n "$changed" ] && [ "$HAS_LABEL" != "true" ]; then
+            echo "Baselines visuais alteradas sem o label visual-change:"; echo "$changed"; exit 1
+          fi
+      - run: pnpm storybook:build
+      - run: pnpm test:visual
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with: { name: visual-diff, path: test-results/ }
+
+  ai-review:
+    needs: [quality, test-presence, design-tokens, architecture, test, regression-proof, security, images, container-smoke, e2e, visual]
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        id: reviewer
+        with:
+          app-id: ${{ secrets.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - name: Detectar bootstrap (PR que instala o pipeline pela 1ª vez)
+        id: bootstrap
+        run: |
+          # claude-code-action restaura .claude/ da base antes de rodar (PR head
+          # é sempre não confiável). Na PR "chore: instala zenbit-pipeline" a
+          # base ainda não tem .claude/agents/reviewer.md: não há subagente para
+          # revisar. Pula o ai-review (vira "skipped", não bloqueia o merge, como
+          # já acontece com regression-proof) e pede revisão humana só desta vez.
+          if git cat-file -e "origin/$BASE_REF:.claude/agents/reviewer.md" 2>/dev/null; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Avisar que esta PR precisa de revisão humana (bootstrap)
+        if: steps.bootstrap.outputs.skip == 'true'
+        env: { GH_TOKEN: "${{ steps.reviewer.outputs.token }}", PR: "${{ github.event.pull_request.number }}" }
+        run: |
+          gh pr comment "$PR" --body $'ai-review pulado: esta PR instala `.claude/agents/` pela primeira vez (ainda não existe em `'"$BASE_REF"'`), então não há subagente reviewer para rodar contra. Revisão humana, uma vez só.'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: steps.bootstrap.outputs.skip != 'true'
+        with: { name: quality-report, path: quality-report }
+        continue-on-error: true
+      - name: Review 1 · correção, segurança, testes
+        if: steps.bootstrap.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.reviewer.outputs.token }}
+          prompt: |
+            Use o subagente reviewer para revisar o PR #${{ github.event.pull_request.number }}.
+            Base: origin/${{ env.BASE_REF }}. Leia a issue vinculada e o spec.
+            Escreva o resultado em review.json no formato da skill code-review.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 25
+            --allowedTools "Read,Grep,Glob,Write(review.json),Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*)"
+      - name: Review 2 · qualidade de código (Clean Code, Arquitetura Limpa, DDD)
+        if: steps.bootstrap.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.reviewer.outputs.token }}
+          prompt: |
+            Use o subagente code-quality no modo "Review de PR" para o PR #${{ github.event.pull_request.number }}.
+            Base: origin/${{ env.BASE_REF }}. Leia a issue, o plan.md, docs/domain/ e quality-report/.
+            Escreva o resultado em quality.json no formato da skill quality-review.
+          claude_args: >-
+            --model claude-opus-5-5 --max-turns 30
+            --allowedTools "Read,Grep,Glob,Write(quality.json),Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*)"
+      - name: Publicar review (aprova só se os dois aprovarem)
+        if: steps.bootstrap.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.reviewer.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          for f in review.json quality.json; do test -f "$f" || { echo "$f não gerado"; exit 1; }; done
+          v1=$(jq -r .verdict review.json); v2=$(jq -r .verdict quality.json)
+          {
+            echo "## Review (correção, segurança, testes) — $v1"; jq -r .summary review.json; echo
+            echo "## Qualidade de código (Clean Code, Arquitetura Limpa, DDD) — $v2"; jq -r .summary quality.json; echo
+            jq -r '.findings[] | select(.severity != "minor") | "- **\(.severity)** `\(.file):\(.line)` [\(.principle)] \(.smell): \(.message) → \(.refactor)"' quality.json
+          } > body.md
+          if [ "$v1" = "approve" ] && [ "$v2" = "approve" ]; then
+            gh pr review "$PR" --approve --body-file body.md
+          else
+            gh pr review "$PR" --request-changes --body-file body.md
+            gh pr edit "$PR" --add-label status:needs-fix
+            exit 1
+          fi

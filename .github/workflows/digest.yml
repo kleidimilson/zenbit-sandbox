@@ -1,0 +1,26 @@
+name: Digest diário
+on:
+  schedule:
+    - cron: "47 20 * * *"   # 17:47 em America/Fortaleza
+  workflow_dispatch:
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DISCORD_WEBHOOK_FEED: ${{ secrets.DISCORD_WEBHOOK_FEED }}
+      DISCORD_WEBHOOK_ALERTS: ${{ secrets.DISCORD_WEBHOOK_ALERTS }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Montar e enviar
+        run: |
+          since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          merged=$(gh pr list --state merged --search "merged:>=$since" --json number,title \
+            -q '.[] | "• #\(.number) \(.title)"')
+          review=$(gh issue list --label status:in-review --json number -q length)
+          ready=$(gh issue list --label status:ready --json number -q length)
+          human=$(gh issue list --label status:needs-human --json number,title \
+            -q '.[] | "• #\(.number) \(.title)"')
+          ./scripts/notify-discord.sh feed "$(printf '**Digest do dia**\n\n**Mergeados**\n%s\n\n**Em review:** %s · **Na fila:** %s\n\n**Precisam de você**\n%s' \
+            "${merged:-nenhum}" "$review" "$ready" "${human:-nada}")"

@@ -1,0 +1,14 @@
+# Caminhos sensíveis exigem revisão do responsável técnico.
+# Ative "Require review from Code Owners" na branch protection.
+/packages/db/prisma/migrations/ @kleidimilson
+/apps/api/src/auth/             @kleidimilson
+/apps/api/src/billing/          @kleidimilson
+/design-system/                 @kleidimilson
+/.github/                       @kleidimilson
+/.claude/                       @kleidimilson
+/CLAUDE.md                      @kleidimilson
+/pipeline.config.json           @kleidimilson
+/docs/domain/                   @kleidimilson
+/.dependency-cruiser.cjs        @kleidimilson
+/.dependency-cruiser-known-violations.json @kleidimilson
+/eslint.quality.config.mjs      @kleidimilson
