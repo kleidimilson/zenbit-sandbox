@@ -27,6 +27,9 @@ LABEL org.opencontainers.image.source="https://github.com/kleidimilson/zenbit-sa
 ENV NODE_ENV=production APP_VERSION=${VERSION} PORT=8080
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends tini curl && rm -rf /var/lib/apt/lists/*
+# npm, yarn e corepack vêm na imagem node e não são usados em runtime (Trivy acha CVEs neles)
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=build --chown=1000:1000 /out ./
 USER 1000:1000
 EXPOSE 8080

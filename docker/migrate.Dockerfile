@@ -12,5 +12,10 @@ WORKDIR /repo
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/db/ packages/db/
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile --filter db...
+# npm, yarn e corepack vêm na imagem node e não são usados em runtime (Trivy acha CVEs neles)
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+    /root/.cache /pnpm
+WORKDIR /repo/packages/db
 USER 1000:1000
-CMD ["pnpm", "--filter", "db", "exec", "prisma", "migrate", "deploy"]
+CMD ["node_modules/.bin/prisma", "migrate", "deploy"]
