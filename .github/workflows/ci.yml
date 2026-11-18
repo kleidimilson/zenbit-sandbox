@@ -131,11 +131,12 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    permissions: { contents: read, pull-requests: read }
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@v2
-        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}", GITLEAKS_ENABLE_COMMENTS: "false" }
       - uses: google/osv-scanner-action/osv-scanner-action@v2.7.1
         with:
           scan-args: --lockfile=pnpm-lock.yaml
@@ -184,6 +185,7 @@ jobs:
               aquasec/trivy:latest image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH \
               "ghcr.io/kleidimilson/zenbit-sandbox-$svc:${{ steps.tag.outputs.tag }}"
           done
+      # attestation não existe em repositório privado de conta pessoal (limitação do GitHub)
       - name: Digests
         id: digests
         env:
@@ -192,11 +194,14 @@ jobs:
           for svc in api web migrate; do
             echo "$svc=$(echo "$META" | jq -r --arg s "$svc" '.[$s]["containerimage.digest"]')" >> "$GITHUB_OUTPUT"
           done
-      - uses: actions/attest-build-provenance@v1
+      - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
+        uses: actions/attest-build-provenance@v1
         with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-api", subject-digest: "${{ steps.digests.outputs.api }}", push-to-registry: true }
-      - uses: actions/attest-build-provenance@v1
+      - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
+        uses: actions/attest-build-provenance@v1
         with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-web", subject-digest: "${{ steps.digests.outputs.web }}", push-to-registry: true }
-      - uses: actions/attest-build-provenance@v1
+      - if: ${{ !(github.event.repository.private && github.event.repository.owner.type == 'User') }}
+        uses: actions/attest-build-provenance@v1
         with: { subject-name: "ghcr.io/kleidimilson/zenbit-sandbox-migrate", subject-digest: "${{ steps.digests.outputs.migrate }}", push-to-registry: true }
 
   container-smoke:
